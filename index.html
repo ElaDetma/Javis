@@ -53,16 +53,18 @@
   <div class="modal" id="settingsModal" hidden>
     <div class="modal-card">
       <h2>Einstellungen</h2>
-      <label>Anthropic API-Key
-        <input type="password" id="apiKey" placeholder="sk-ant-..." />
-      </label>
-      <p class="hint">Der Key wird nur lokal in deinem Browser gespeichert und direkt an Anthropic gesendet.</p>
-      <label>Modell
-        <select id="model">
-          <option value="claude-opus-4-8">Claude Opus 4.8 (stärkstes)</option>
-          <option value="claude-sonnet-5">Claude Sonnet 5 (schnell)</option>
-          <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (günstig)</option>
+      <label>KI-Anbieter
+        <select id="provider">
+          <option value="gemini">Google Gemini (kostenlos)</option>
+          <option value="anthropic">Anthropic Claude (kostenpflichtig)</option>
         </select>
+      </label>
+      <label id="keyLabel">API-Key
+        <input type="password" id="apiKey" placeholder="Key hier einfügen" />
+      </label>
+      <p class="hint" id="keyHint"></p>
+      <label>Modell
+        <select id="model"></select>
       </label>
       <label>Stimme
         <select id="voiceSelect"></select>

@@ -10,13 +10,54 @@ const state = {
   history: [],            // { role: 'user'|'assistant', content: '...' }
   goals: load('javis_goals', []),
   settings: load('javis_settings', {
-    apiKey: '',
-    model: 'claude-opus-4-8',
+    provider: 'gemini',
+    keys: { anthropic: '', gemini: '' },
+    models: { anthropic: 'claude-haiku-4-5-20251001', gemini: 'gemini-2.0-flash' },
     voiceURI: '',
     autoSpeak: true,
   }),
   speaking: false,
   listening: false,
+};
+
+// Migration: alte Einstellungen ({apiKey, model}) auf das neue Anbieter-Format heben.
+(function migrateSettings() {
+  const s = state.settings;
+  if (!s.provider) s.provider = 'gemini';
+  if (!s.keys) s.keys = { anthropic: '', gemini: '' };
+  if (!s.models) s.models = { anthropic: 'claude-haiku-4-5-20251001', gemini: 'gemini-2.0-flash' };
+  if (s.apiKey) { // alter einzelner Anthropic-Key
+    if (!s.keys.anthropic) s.keys.anthropic = s.apiKey;
+    delete s.apiKey;
+  }
+  if (s.model) { // altes einzelnes Anthropic-Modell
+    if (!s.models.anthropic) s.models.anthropic = s.model;
+    delete s.model;
+  }
+})();
+
+// Auswahlmöglichkeiten je Anbieter (Wert = Modell-ID, Text = Anzeige).
+const PROVIDERS = {
+  gemini: {
+    label: 'Google Gemini',
+    keyPlaceholder: 'AIza...',
+    keyHint: 'Kostenloser Key auf aistudio.google.com → „Get API key". Kein Guthaben/keine Kreditkarte nötig. Wird nur lokal im Browser gespeichert.',
+    models: [
+      ['gemini-2.0-flash', 'Gemini 2.0 Flash (schnell, gratis)'],
+      ['gemini-2.5-flash', 'Gemini 2.5 Flash (neuer)'],
+      ['gemini-1.5-flash', 'Gemini 1.5 Flash'],
+    ],
+  },
+  anthropic: {
+    label: 'Anthropic Claude',
+    keyPlaceholder: 'sk-ant-...',
+    keyHint: 'Key auf console.anthropic.com. Kostenpflichtig (Guthaben nötig). Wird nur lokal im Browser gespeichert.',
+    models: [
+      ['claude-haiku-4-5-20251001', 'Claude Haiku 4.5 (günstig)'],
+      ['claude-sonnet-5', 'Claude Sonnet 5 (schnell)'],
+      ['claude-opus-4-8', 'Claude Opus 4.8 (stärkstes)'],
+    ],
+  },
 };
 
 const SYSTEM_PROMPT = `Du bist JAVIS, ein persönlicher KI-Assistent im Stil von JARVIS aus Iron Man.
@@ -235,19 +276,35 @@ function toggleMic() {
   recognition.start();
 }
 
-/* ---------- Anthropic API ---------- */
-async function askClaude() {
-  const key = state.settings.apiKey;
-  if (!key) {
-    openSettings();
-    throw new Error('Kein API-Key hinterlegt.');
-  }
+/* ---------- KI-Anbindung (anbieter-neutral) ----------
+   state.history hält schlichte Turns: { role:'user'|'assistant', text:'...' }.
+   Je nach gewähltem Anbieter wird daraus die passende Anfrage gebaut. */
+function currentKey() {
+  return (state.settings.keys[state.settings.provider] || '').trim();
+}
+function systemPrompt() {
   const goalsText = state.goals.length
     ? '\n\nAktuelle Ziele des Nutzers:\n' + state.goals.map((g, i) => `${i + 1}. [${g.done ? 'erledigt' : 'offen'}] ${g.text}`).join('\n')
     : '';
+  return SYSTEM_PROMPT + goalsText;
+}
 
-  // Tool-Use-Schleife: das Modell kann add_goal aufrufen, wir führen es aus
-  // und lassen es danach seine finale Textantwort formulieren.
+async function askAI() {
+  const key = currentKey();
+  if (!key) {
+    openSettings();
+    throw new Error('Kein API-Key hinterlegt. Bitte oben rechts unter ⚙️ eintragen.');
+  }
+  const reply = state.settings.provider === 'gemini'
+    ? await askGemini(key)
+    : await askAnthropic(key);
+  state.history.push({ role: 'assistant', text: reply });
+  return reply;
+}
+
+/* --- Anthropic Claude --- */
+async function askAnthropic(key) {
+  const messages = state.history.map((m) => ({ role: m.role, content: m.text }));
   for (let turn = 0; turn < 4; turn++) {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -258,34 +315,81 @@ async function askClaude() {
         'anthropic-dangerous-direct-browser-access': 'true',
       },
       body: JSON.stringify({
-        model: state.settings.model,
+        model: state.settings.models.anthropic,
         max_tokens: 1024,
-        system: SYSTEM_PROMPT + goalsText,
+        system: systemPrompt(),
         tools: TOOLS,
-        messages: state.history,
+        messages,
       }),
     });
-
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`API-Fehler ${res.status}: ${err}`);
-    }
+    if (!res.ok) throw new Error(`API-Fehler ${res.status}: ${await res.text()}`);
     const data = await res.json();
-    // Assistant-Nachricht (inkl. tool_use-Blöcke) in die History übernehmen
-    state.history.push({ role: 'assistant', content: data.content });
+    messages.push({ role: 'assistant', content: data.content });
 
     const toolUses = (data.content || []).filter((c) => c.type === 'tool_use');
     if (data.stop_reason === 'tool_use' && toolUses.length) {
-      const results = toolUses.map((tu) => {
-        let msg = 'Nicht ausgeführt.';
-        if (tu.name === 'add_goal') msg = handleAddGoal(tu.input.text);
-        return { type: 'tool_result', tool_use_id: tu.id, content: msg };
+      messages.push({
+        role: 'user',
+        content: toolUses.map((tu) => ({
+          type: 'tool_result',
+          tool_use_id: tu.id,
+          content: tu.name === 'add_goal' ? handleAddGoal(tu.input.text) : 'Nicht ausgeführt.',
+        })),
       });
-      state.history.push({ role: 'user', content: results });
-      continue; // nächste Runde: Modell formuliert Antwort
+      continue;
     }
-
     const text = (data.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
+    return text || 'In Ordnung.';
+  }
+  return 'Ich konnte die Anfrage nicht abschließen.';
+}
+
+/* --- Google Gemini (kostenloses Kontingent) --- */
+async function askGemini(key) {
+  const model = state.settings.models.gemini;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+  const contents = state.history.map((m) => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.text }],
+  }));
+  const geminiTools = [{
+    functionDeclarations: [{
+      name: 'add_goal',
+      description: TOOLS[0].description,
+      parameters: { type: 'object', properties: { text: { type: 'string', description: 'Das Ziel, kurz formuliert.' } }, required: ['text'] },
+    }],
+  }];
+
+  for (let turn = 0; turn < 4; turn++) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemPrompt() }] },
+        contents,
+        tools: geminiTools,
+      }),
+    });
+    if (!res.ok) throw new Error(`API-Fehler ${res.status}: ${await res.text()}`);
+    const data = await res.json();
+    const cand = data.candidates && data.candidates[0];
+    const parts = (cand && cand.content && cand.content.parts) || [];
+    const calls = parts.filter((p) => p.functionCall);
+
+    if (calls.length) {
+      contents.push({ role: 'model', parts });
+      contents.push({
+        role: 'user',
+        parts: calls.map((p) => ({
+          functionResponse: {
+            name: p.functionCall.name,
+            response: { result: p.functionCall.name === 'add_goal' ? handleAddGoal(p.functionCall.args && p.functionCall.args.text) : 'Nicht ausgeführt.' },
+          },
+        })),
+      });
+      continue;
+    }
+    const text = parts.filter((p) => p.text).map((p) => p.text).join('\n');
     return text || 'In Ordnung.';
   }
   return 'Ich konnte die Anfrage nicht abschließen.';
@@ -309,12 +413,12 @@ async function send(text) {
   if (!text) return;
   $('textInput').value = '';
   addMessage('user', text);
-  state.history.push({ role: 'user', content: text });
+  state.history.push({ role: 'user', text });
 
   setState('thinking', 'Denkt nach…');
   const holder = addMessage('javis', '…');
   try {
-    const reply = await askClaude(); // History wird in askClaude gepflegt
+    const reply = await askAI(); // History wird in askAI gepflegt
     holder.lastChild.textContent = reply;
     speak(reply);
     if (!state.settings.autoSpeak) setState('idle', 'Bereit');
@@ -353,16 +457,34 @@ function addGoal() {
 }
 
 /* ---------- Settings ---------- */
+// Modell-Auswahl und Key-Feld an den gewählten Anbieter anpassen.
+function refreshProviderUI() {
+  const p = state.settings.provider;
+  const conf = PROVIDERS[p];
+  const modelSel = $('model');
+  modelSel.innerHTML = '';
+  conf.models.forEach(([val, label]) => {
+    const o = document.createElement('option');
+    o.value = val; o.textContent = label;
+    modelSel.appendChild(o);
+  });
+  modelSel.value = state.settings.models[p];
+  $('apiKey').value = state.settings.keys[p] || '';
+  $('apiKey').placeholder = conf.keyPlaceholder;
+  $('keyHint').textContent = conf.keyHint;
+}
 function openSettings() {
-  $('apiKey').value = state.settings.apiKey;
-  $('model').value = state.settings.model;
+  $('provider').value = state.settings.provider;
+  refreshProviderUI();
   $('autoSpeak').checked = state.settings.autoSpeak;
   loadVoices();
   $('settingsModal').hidden = false;
 }
 function saveSettings() {
-  state.settings.apiKey = $('apiKey').value.trim();
-  state.settings.model = $('model').value;
+  const p = $('provider').value;
+  state.settings.provider = p;
+  state.settings.keys[p] = $('apiKey').value.trim();
+  state.settings.models[p] = $('model').value;
   state.settings.voiceURI = $('voiceSelect').value;
   state.settings.autoSpeak = $('autoSpeak').checked;
   save('javis_settings', state.settings);
@@ -408,14 +530,16 @@ $('addGoalBtn').onclick = addGoal;
 $('settingsBtn').onclick = openSettings;
 $('saveSettings').onclick = saveSettings;
 $('closeSettings').onclick = () => { $('settingsModal').hidden = true; };
+// Beim Anbieter-Wechsel Modell-Liste und Key-Feld sofort aktualisieren.
+$('provider').onchange = () => { state.settings.provider = $('provider').value; refreshProviderUI(); };
 
 /* ---------- Init ---------- */
 renderGoals();
 loadVoices();
 updateWakeBtn();
 addMessage('javis', 'Systeme online. Ich bin JAVIS. Sag oder schreib mir dein Ziel — zum Beispiel „Hilf mir, 500€ zu verdienen" oder „Bau mit mir mein Unity-Spiel fertig". Tipp: Aktiviere 👂 und sag einfach „Hey JAVIS".');
-if (!state.settings.apiKey) {
-  addMessage('javis', 'Kurz vorab: Bitte hinterlege deinen Anthropic API-Key oben rechts unter ⚙️, damit ich denken kann.');
+if (!currentKey()) {
+  addMessage('javis', 'Kurz vorab: Bitte hinterlege oben rechts unter ⚙️ einen API-Key. Voreingestellt ist Google Gemini — der ist kostenlos (Key auf aistudio.google.com holen).');
 }
 // Gespeicherten Wake-Modus wiederherstellen (Start erst nach erster Nutzer-Geste erlaubt).
 if (load('javis_wake', false) && wakeRecognition) {

@@ -12,7 +12,7 @@ animierter Orb, mit dem du **schreiben und sprechen** kannst und der dir per
 - 🔊 **Sprachausgabe** – Antworten werden vorgelesen (Stimme wählbar)
 - ⌨️ **Texteingabe** als Alternative
 - 🎯 **Ziele-Panel** – Ziele speichern, abhaken und JAVIS gezielt um Hilfe bitten
-- 🧠 Antworten von **Claude** (Opus 4.8 / Sonnet 5 / Haiku 4.5)
+- 🧠 Antworten von **Google Gemini (kostenlos)** oder **Claude** – umschaltbar in den Einstellungen
 - 💾 Alles läuft lokal im Browser – der API-Key wird nur lokal gespeichert
 
 ## Loslegen
@@ -23,8 +23,9 @@ animierter Orb, mit dem du **schreiben und sprechen** kannst und der dir per
    python3 -m http.server 8000
    # dann http://localhost:8000 öffnen
    ```
-2. Oben rechts auf ⚙️ klicken und deinen **Anthropic API-Key** eintragen
-   (bekommst du auf https://console.anthropic.com).
+2. Oben rechts auf ⚙️ klicken, **Anbieter** wählen und den **API-Key** eintragen:
+   - **Google Gemini (kostenlos, empfohlen):** Key gratis auf https://aistudio.google.com → „Get API key" (keine Kreditkarte nötig).
+   - **Anthropic Claude (kostenpflichtig):** Key auf https://console.anthropic.com (Guthaben erforderlich).
 3. Stimme wählen, speichern – fertig.
 4. Auf 🎙️ (oder den Orb) klicken und sprechen, oder unten tippen.
 
