@@ -124,15 +124,100 @@ if (SR) {
   recognition.onend = () => {
     state.listening = false;
     $('micBtn').classList.remove('rec');
-    setState('idle', 'Bereit');
     const t = $('textInput').value.trim();
     if (t) send(t);
+    resumeWakeIfWanted();
   };
   recognition.onerror = () => {
     state.listening = false;
     $('micBtn').classList.remove('rec');
     setState('idle', 'Bereit');
+    resumeWakeIfWanted();
   };
+}
+
+/* ---------- Wake-Word „Hey JAVIS" ----------
+   Separater Dauer-Recognizer, der im Hintergrund lauscht. Erkennt er das
+   Wake-Word, pausiert er und startet die normale Befehls-Erkennung. */
+const WAKE_WORDS = ['hey javis', 'hey jarvis', 'hey jervis', 'hallo javis', 'ok javis', 'hey chavis'];
+let wakeRecognition = null;
+let wakeWanted = false; // Nutzer hat Wake-Modus aktiviert
+
+if (SR) {
+  wakeRecognition = new SR();
+  wakeRecognition.lang = 'de-DE';
+  wakeRecognition.continuous = true;
+  wakeRecognition.interimResults = true;
+
+  wakeRecognition.onresult = (e) => {
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript.toLowerCase().trim();
+      if (WAKE_WORDS.some((w) => t.includes(w))) {
+        stopWake();
+        // Bestätigungston + direkt aufnehmen
+        if (state.settings.autoSpeak) speak('Ja?');
+        setTimeout(() => { if (!state.listening) startCommand(); }, state.settings.autoSpeak ? 600 : 0);
+        return;
+      }
+    }
+  };
+  // Chrome beendet die Erkennung periodisch — im Wake-Modus neu starten.
+  wakeRecognition.onend = () => { if (wakeWanted && !state.listening) safeStartWake(); };
+  wakeRecognition.onerror = (ev) => {
+    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+      wakeWanted = false; updateWakeBtn();
+      addMessage('javis', 'Für „Hey JAVIS" brauche ich die Mikrofon-Erlaubnis. Bitte im Browser zulassen.');
+    }
+  };
+}
+
+function safeStartWake() {
+  try { wakeRecognition.start(); } catch (_) { /* läuft evtl. schon */ }
+}
+// Nach einer Befehls-Aufnahme wieder in den Lausch-Modus zurückkehren.
+function resumeWakeIfWanted() {
+  if (wakeWanted && !state.listening) {
+    setState('idle', 'Warte auf „Hey JAVIS"…');
+    setTimeout(safeStartWake, 400);
+  } else {
+    setState('idle', 'Bereit');
+  }
+}
+function stopWake() {
+  if (!wakeRecognition) return;
+  try { wakeRecognition.stop(); } catch (_) {}
+}
+function updateWakeBtn() {
+  const b = $('wakeBtn');
+  b.classList.toggle('rec', wakeWanted);
+  b.title = wakeWanted ? 'Wake-Word „Hey JAVIS" AN (klick zum Ausschalten)' : 'Wake-Word „Hey JAVIS" AUS';
+}
+function toggleWake() {
+  if (!wakeRecognition) {
+    addMessage('javis', 'Wake-Word wird von diesem Browser nicht unterstützt. Nutze am besten Chrome/Edge.');
+    return;
+  }
+  wakeWanted = !wakeWanted;
+  save('javis_wake', wakeWanted);
+  updateWakeBtn();
+  if (wakeWanted) {
+    setState('idle', 'Warte auf „Hey JAVIS"…');
+    safeStartWake();
+    addMessage('javis', 'Ich höre auf „Hey JAVIS". Sag es einfach — ich melde mich.');
+  } else {
+    stopWake();
+    setState('idle', 'Bereit');
+  }
+}
+
+// Startet die eigentliche Befehls-Aufnahme (nach Wake-Word oder Klick).
+function startCommand() {
+  speechSynthesis.cancel();
+  $('textInput').value = '';
+  state.listening = true;
+  $('micBtn').classList.add('rec');
+  setState('listening', 'Hört zu…');
+  try { recognition.start(); } catch (_) {}
 }
 
 function toggleMic() {
@@ -141,6 +226,7 @@ function toggleMic() {
     return;
   }
   if (state.listening) { recognition.stop(); return; }
+  stopWake(); // Konflikt zweier Recognizer vermeiden
   speechSynthesis.cancel();
   $('textInput').value = '';
   state.listening = true;
@@ -317,6 +403,7 @@ $('sendBtn').onclick = () => send();
 $('micBtn').onclick = toggleMic;
 $('orb').onclick = toggleMic;
 $('textInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+$('wakeBtn').onclick = toggleWake;
 $('addGoalBtn').onclick = addGoal;
 $('settingsBtn').onclick = openSettings;
 $('saveSettings').onclick = saveSettings;
@@ -325,7 +412,13 @@ $('closeSettings').onclick = () => { $('settingsModal').hidden = true; };
 /* ---------- Init ---------- */
 renderGoals();
 loadVoices();
-addMessage('javis', 'Systeme online. Ich bin JAVIS. Sag oder schreib mir dein Ziel — zum Beispiel „Hilf mir, 500€ zu verdienen" oder „Bau mit mir mein Unity-Spiel fertig". Womit fangen wir an?');
+updateWakeBtn();
+addMessage('javis', 'Systeme online. Ich bin JAVIS. Sag oder schreib mir dein Ziel — zum Beispiel „Hilf mir, 500€ zu verdienen" oder „Bau mit mir mein Unity-Spiel fertig". Tipp: Aktiviere 👂 und sag einfach „Hey JAVIS".');
 if (!state.settings.apiKey) {
   addMessage('javis', 'Kurz vorab: Bitte hinterlege deinen Anthropic API-Key oben rechts unter ⚙️, damit ich denken kann.');
+}
+// Gespeicherten Wake-Modus wiederherstellen (Start erst nach erster Nutzer-Geste erlaubt).
+if (load('javis_wake', false) && wakeRecognition) {
+  const arm = () => { if (!wakeWanted) toggleWake(); window.removeEventListener('pointerdown', arm); };
+  window.addEventListener('pointerdown', arm, { once: true });
 }

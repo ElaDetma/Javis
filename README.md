@@ -8,6 +8,7 @@ animierter Orb, mit dem du **schreiben und sprechen** kannst und der dir per
 ## Features
 - 🔵 **Animierter Orb** mit Ringen, Glühen und Live-Wellen-Visualizer
 - 🎙️ **Spracheingabe** (Push-to-talk, Klick auf Mikro oder Orb) via Web Speech API
+- 👂 **Wake-Word „Hey JAVIS"** – 👂 aktivieren und freihändig per „Hey JAVIS" starten
 - 🔊 **Sprachausgabe** – Antworten werden vorgelesen (Stimme wählbar)
 - ⌨️ **Texteingabe** als Alternative
 - 🎯 **Ziele-Panel** – Ziele speichern, abhaken und JAVIS gezielt um Hilfe bitten
