@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JAVIS — Dein KI-Interface</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="stars"></div>
+
+  <main class="app">
+    <!-- ===== ORB ===== -->
+    <section class="orb-stage">
+      <div class="orb" id="orb" data-state="idle" title="Klick, um zu sprechen">
+        <div class="orb-glow"></div>
+        <div class="orb-ring ring-1"></div>
+        <div class="orb-ring ring-2"></div>
+        <div class="orb-ring ring-3"></div>
+        <div class="orb-core">
+          <canvas id="viz" width="320" height="320"></canvas>
+        </div>
+        <div class="orb-shine"></div>
+      </div>
+      <div class="orb-status" id="status">Bereit</div>
+    </section>
+
+    <!-- ===== CONVERSATION ===== -->
+    <section class="panel conversation" id="conversation">
+      <div class="log" id="log"></div>
+    </section>
+
+    <!-- ===== INPUT BAR ===== -->
+    <section class="inputbar">
+      <button class="icon-btn" id="wakeBtn" title="Wake-Word „Hey JAVIS" an/aus">👂</button>
+      <button class="icon-btn" id="micBtn" title="Sprechen (Push-to-talk)">🎙️</button>
+      <input type="text" id="textInput" placeholder="Schreib JAVIS etwas… oder klick auf 🎙️" autocomplete="off" />
+      <button class="icon-btn send" id="sendBtn" title="Senden">➤</button>
+    </section>
+
+    <!-- ===== GOALS ===== -->
+    <section class="panel goals">
+      <div class="goals-head">
+        <h2>🎯 Ziele</h2>
+        <button class="icon-btn small" id="addGoalBtn" title="Ziel hinzufügen">＋</button>
+      </div>
+      <ul class="goal-list" id="goalList"></ul>
+    </section>
+  </main>
+
+  <!-- ===== SETTINGS ===== -->
+  <button class="gear" id="settingsBtn" title="Einstellungen">⚙️</button>
+  <div class="modal" id="settingsModal" hidden>
+    <div class="modal-card">
+      <h2>Einstellungen</h2>
+      <label>Anthropic API-Key
+        <input type="password" id="apiKey" placeholder="sk-ant-..." />
+      </label>
+      <p class="hint">Der Key wird nur lokal in deinem Browser gespeichert und direkt an Anthropic gesendet.</p>
+      <label>Modell
+        <select id="model">
+          <option value="claude-opus-4-8">Claude Opus 4.8 (stärkstes)</option>
+          <option value="claude-sonnet-5">Claude Sonnet 5 (schnell)</option>
+          <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (günstig)</option>
+        </select>
+      </label>
+      <label>Stimme
+        <select id="voiceSelect"></select>
+      </label>
+      <label class="row">
+        <input type="checkbox" id="autoSpeak" checked /> Antworten automatisch vorlesen
+      </label>
+      <div class="modal-actions">
+        <button id="saveSettings" class="btn primary">Speichern</button>
+        <button id="closeSettings" class="btn">Schließen</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
