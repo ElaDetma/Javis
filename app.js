@@ -25,7 +25,25 @@ Antworte standardmäßig auf Deutsch, kurz und klar — deine Antworten werden v
 also vermeide lange Aufzählungen, Code-Blöcke oder Formatierung, wenn nicht ausdrücklich gewünscht.
 Du hilfst dem Nutzer aktiv, seine Ziele zu erreichen (z.B. Geld verdienen, ein Unity-Spiel
 fertig bauen, lernen). Sei konkret, schlage nächste Schritte vor und frag nach, wenn dir
-Informationen fehlen. Wenn nach Code oder Details gefragt wird, darfst du ausführlicher werden.`;
+Informationen fehlen. Wenn nach Code oder Details gefragt wird, darfst du ausführlicher werden.
+
+Wichtig: Wann immer der Nutzer ein neues Ziel, Vorhaben oder eine Absicht nennt
+(z.B. "ich will 500€ verdienen", "hilf mir mein Spiel fertig zu bauen", "ich möchte
+Gitarre lernen"), lege es mit dem Werkzeug "add_goal" an — auch ungefragt. Doppelte
+oder bereits vorhandene Ziele nicht erneut anlegen. Erwähne beiläufig, dass du es
+zur Ziel-Liste hinzugefügt hast.`;
+
+const TOOLS = [{
+  name: 'add_goal',
+  description: 'Fügt der Ziel-Liste des Nutzers ein neues Ziel hinzu, wenn er im Gespräch ein Vorhaben, eine Absicht oder ein Ziel nennt.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      text: { type: 'string', description: 'Das Ziel, kurz und klar formuliert (z.B. "500€ verdienen").' },
+    },
+    required: ['text'],
+  },
+}];
 
 /* ---------- Persistenz ---------- */
 function load(key, fallback) {
@@ -142,28 +160,61 @@ async function askClaude() {
     ? '\n\nAktuelle Ziele des Nutzers:\n' + state.goals.map((g, i) => `${i + 1}. [${g.done ? 'erledigt' : 'offen'}] ${g.text}`).join('\n')
     : '';
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': key,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model: state.settings.model,
-      max_tokens: 1024,
-      system: SYSTEM_PROMPT + goalsText,
-      messages: state.history,
-    }),
-  });
+  // Tool-Use-Schleife: das Modell kann add_goal aufrufen, wir führen es aus
+  // und lassen es danach seine finale Textantwort formulieren.
+  for (let turn = 0; turn < 4; turn++) {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: state.settings.model,
+        max_tokens: 1024,
+        system: SYSTEM_PROMPT + goalsText,
+        tools: TOOLS,
+        messages: state.history,
+      }),
+    });
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`API-Fehler ${res.status}: ${err}`);
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`API-Fehler ${res.status}: ${err}`);
+    }
+    const data = await res.json();
+    // Assistant-Nachricht (inkl. tool_use-Blöcke) in die History übernehmen
+    state.history.push({ role: 'assistant', content: data.content });
+
+    const toolUses = (data.content || []).filter((c) => c.type === 'tool_use');
+    if (data.stop_reason === 'tool_use' && toolUses.length) {
+      const results = toolUses.map((tu) => {
+        let msg = 'Nicht ausgeführt.';
+        if (tu.name === 'add_goal') msg = handleAddGoal(tu.input.text);
+        return { type: 'tool_result', tool_use_id: tu.id, content: msg };
+      });
+      state.history.push({ role: 'user', content: results });
+      continue; // nächste Runde: Modell formuliert Antwort
+    }
+
+    const text = (data.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
+    return text || 'In Ordnung.';
   }
-  const data = await res.json();
-  return (data.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
+  return 'Ich konnte die Anfrage nicht abschließen.';
+}
+
+// Fügt ein Ziel hinzu (dedupliziert) und aktualisiert die UI.
+function handleAddGoal(text) {
+  const t = (text || '').trim();
+  if (!t) return 'Leeres Ziel ignoriert.';
+  const exists = state.goals.some((g) => g.text.toLowerCase() === t.toLowerCase());
+  if (exists) return `Ziel "${t}" existiert bereits.`;
+  state.goals.push({ text: t, done: false });
+  save('javis_goals', state.goals);
+  renderGoals();
+  return `Ziel "${t}" wurde zur Liste hinzugefügt.`;
 }
 
 /* ---------- Senden ---------- */
@@ -177,9 +228,8 @@ async function send(text) {
   setState('thinking', 'Denkt nach…');
   const holder = addMessage('javis', '…');
   try {
-    const reply = await askClaude();
+    const reply = await askClaude(); // History wird in askClaude gepflegt
     holder.lastChild.textContent = reply;
-    state.history.push({ role: 'assistant', content: reply });
     speak(reply);
     if (!state.settings.autoSpeak) setState('idle', 'Bereit');
   } catch (e) {
